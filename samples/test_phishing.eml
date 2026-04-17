@@ -1,0 +1,23 @@
+From: "PayPal Security" <security@paypa1-verify.xyz>
+To: victim@example.com
+Subject: URGENT: Your Account Has Been Suspended!!!
+Reply-To: collect@evil-domain.ru
+Return-Path: <bounce@phishingsite.click>
+Authentication-Results: mx.example.com; spf=fail; dkim=fail; dmarc=fail
+Received: from unknown (HELO mail.phishingsite.click) (203.0.113.45)
+
+Dear Valued Customer,
+
+Your PayPal account has been suspended due to suspicious activity! ACT NOW to restore access IMMEDIATELY or your account will be terminated within 24 hours!!!
+
+Please verify your account and confirm your personal information by clicking the link below:
+
+http://203.0.113.45/paypa1/login?redirect=http://bit.ly/2xFakeURL&token=%41%42%43%44%45%46%47%48%49%4A%4B%4C
+
+Enter your password and Social Security Number to confirm your identity.
+
+You have WON a free gift for verifying your account today! Claim your reward now before it expires!
+
+This is your LAST CHANCE to save your account!
+
+PayPal Security Team

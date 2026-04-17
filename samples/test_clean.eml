@@ -1,0 +1,15 @@
+From: "GitHub" <noreply@github.com>
+To: developer@example.com
+Subject: Your pull request was merged
+Authentication-Results: mx.example.com; spf=pass; dkim=pass; dmarc=pass
+Received: from mail.github.com (mail.github.com [192.30.252.1])
+
+Hi there,
+
+Your pull request "Add new feature" was merged into main by johndoe.
+
+You can view the changes at https://github.com/example/repo/pull/42
+
+Thanks for contributing!
+
+The GitHub Team

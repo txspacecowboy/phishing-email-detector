@@ -1,0 +1,2 @@
+# No external dependencies required for Phase 1
+# All modules use Python standard library only (email, re, urllib)
