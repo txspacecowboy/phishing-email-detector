@@ -1,6 +1,6 @@
 import argparse
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -8,10 +8,10 @@ from analyzer import analyze_email, AnalysisResult
 
 
 RISK_COLORS = {
-    "HIGH":   "\033[91m",  # red
-    "MEDIUM": "\033[93m",  # yellow
-    "LOW":    "\033[94m",  # blue
-    "CLEAN":  "\033[92m",  # green
+    "HIGH":   "\033[91m",
+    "MEDIUM": "\033[93m",
+    "LOW":    "\033[94m",
+    "CLEAN":  "\033[92m",
 }
 RESET = "\033[0m"
 
@@ -29,11 +29,26 @@ def print_report(result: AnalysisResult, filename: str):
         for f in result.header_findings:
             print(f"  [{f.score:+3d}]  {f.reason}")
 
+    if result.dns_findings:
+        print("\n[LIVE DNS ANALYSIS]")
+        for f in result.dns_findings:
+            marker = f"[{f.score:+3d}]" if f.score > 0 else "[ ---]"
+            print(f"  {marker}  {f.reason}")
+
     if result.url_findings:
         print("\n[URL ANALYSIS]")
         for f in result.url_findings:
             url_display = f.url[:70] + "..." if len(f.url) > 70 else f.url
             print(f"  [{f.score:+3d}]  {f.reason}")
+            if url_display:
+                print(f"         {url_display}")
+
+    if result.vt_findings:
+        print("\n[VIRUSTOTAL REPUTATION]")
+        for f in result.vt_findings:
+            marker = f"[{f.score:+3d}]" if f.score > 0 else "[ ---]"
+            url_display = f.url[:70] + "..." if len(f.url) > 70 else f.url
+            print(f"  {marker}  {f.reason}")
             if url_display:
                 print(f"         {url_display}")
 
@@ -61,9 +76,25 @@ def main():
     parser.add_argument(
         "--summary",
         action="store_true",
-        help="Print a one-line summary per file instead of the full report",
+        help="Print a one-line summary per file instead of full report",
+    )
+    parser.add_argument(
+        "--dns",
+        action="store_true",
+        help="Enable live DNS checks for SPF/DKIM/DMARC (requires dnspython)",
+    )
+    parser.add_argument(
+        "--vt-key",
+        metavar="API_KEY",
+        default=os.environ.get("VT_API_KEY"),
+        help="VirusTotal API key for URL reputation checks (or set VT_API_KEY env var)",
     )
     args = parser.parse_args()
+
+    if args.vt_key:
+        print(f"[*] VirusTotal integration enabled")
+    if args.dns:
+        print(f"[*] Live DNS analysis enabled")
 
     exit_code = 0
 
@@ -81,7 +112,7 @@ def main():
                 exit_code = 1
                 continue
 
-        result = analyze_email(raw)
+        result = analyze_email(raw, vt_api_key=args.vt_key, live_dns=args.dns)
 
         if args.summary:
             color = RISK_COLORS.get(result.risk_level, "")
