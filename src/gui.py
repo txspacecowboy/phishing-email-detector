@@ -2,10 +2,11 @@ import os
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext
+from tkinter import ttk, filedialog, scrolledtext, simpledialog, messagebox
 
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import analyze_email, AnalysisResult
+from gmail_fetch import connect, fetch_inbox, fetch_folder, list_folders, EmailSummary
 
 # ── Theme ──────────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ class PhishingDetectorApp:
         content.columnconfigure(0, weight=3)
         content.columnconfigure(1, weight=1)
         content.rowconfigure(1, weight=1)
-        content.rowconfigure(2, weight=2)
+        content.rowconfigure(3, weight=2)
 
         self._build_input_panel(content)
         self._build_options_panel(content)
@@ -103,7 +104,7 @@ class PhishingDetectorApp:
                               bg=BG_PANEL, fg=FG_MAIN, font=FONT_BOLD,
                               relief="groove", bd=1, padx=8, pady=6)
         frame.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 6), pady=(0, 6))
-        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
         frame.columnconfigure(0, weight=1)
 
         # File picker row
@@ -122,11 +123,17 @@ class PhishingDetectorApp:
                                     font=FONT_MAIN, anchor="w")
         self._file_label.grid(row=0, column=1, sticky="ew")
 
+        tk.Button(file_row, text="📧 Gmail",
+                  command=self._open_gmail_dialog,
+                  bg="#c0392b", fg="white", font=FONT_BOLD,
+                  relief="flat", padx=10, pady=4,
+                  cursor="hand2").grid(row=0, column=2, padx=(8, 0))
+
         tk.Button(file_row, text="✕ Clear",
                   command=self._clear_input,
                   bg="#e0e0e0", fg=FG_MAIN, font=FONT_MAIN,
                   relief="flat", padx=8, pady=4,
-                  cursor="hand2").grid(row=0, column=2, padx=(8, 0))
+                  cursor="hand2").grid(row=0, column=3, padx=(8, 0))
 
         # Divider label
         tk.Label(frame, text="— or paste raw email text below —",
@@ -263,6 +270,156 @@ class PhishingDetectorApp:
             self._file_label.config(text=os.path.basename(path), fg=FG_MAIN)
         except Exception as e:
             self._file_label.config(text=f"Error: {e}", fg="#c0392b")
+
+    def _open_gmail_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Connect to Gmail")
+        dialog.geometry("420x220")
+        dialog.resizable(False, False)
+        dialog.configure(bg=BG_PANEL)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="Gmail Address:",
+                 bg=BG_PANEL, fg=FG_MAIN, font=FONT_BOLD).grid(
+                 row=0, column=0, sticky="w", padx=16, pady=(20, 4))
+        email_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=email_var, width=35).grid(
+            row=0, column=1, padx=(0, 16), pady=(20, 4))
+
+        tk.Label(dialog, text="App Password:",
+                 bg=BG_PANEL, fg=FG_MAIN, font=FONT_BOLD).grid(
+                 row=1, column=0, sticky="w", padx=16, pady=4)
+        pass_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=pass_var, show="*", width=35).grid(
+            row=1, column=1, padx=(0, 16), pady=4)
+
+        tk.Label(dialog,
+                 text="Use your Gmail App Password\n(not your regular password)",
+                 bg=BG_PANEL, fg=FG_MUTED,
+                 font=("Segoe UI", 8, "italic")).grid(
+                 row=2, column=0, columnspan=2, pady=(0, 12))
+
+        status = tk.Label(dialog, text="", bg=BG_PANEL,
+                          fg="#c0392b", font=("Segoe UI", 9))
+        status.grid(row=3, column=0, columnspan=2)
+
+        def _connect():
+            addr = email_var.get().strip()
+            pwd  = pass_var.get().strip()
+            if not addr or not pwd:
+                status.config(text="Please fill in both fields.")
+                return
+            connect_btn.config(state="disabled", text="Connecting…")
+            status.config(text="", fg=FG_MUTED)
+
+            def _run():
+                try:
+                    conn = connect(addr, pwd)
+                    emails = fetch_inbox(conn, limit=30)
+                    self.root.after(0, lambda: (dialog.destroy(),
+                                                self._show_inbox(conn, emails)))
+                except Exception as e:
+                    err = str(e)
+                    self.root.after(0, lambda: (
+                        status.config(text=f"Error: {err}", fg="#c0392b"),
+                        connect_btn.config(state="normal", text="Connect")
+                    ))
+            threading.Thread(target=_run, daemon=True).start()
+
+        connect_btn = tk.Button(dialog, text="Connect",
+                                command=_connect,
+                                bg="#2980b9", fg="white", font=FONT_BOLD,
+                                relief="flat", padx=16, pady=6, cursor="hand2")
+        connect_btn.grid(row=4, column=0, columnspan=2, pady=(8, 0))
+
+    def _show_inbox(self, conn, emails: list):
+        win = tk.Toplevel(self.root)
+        win.title("Gmail Inbox — Select an Email to Analyze")
+        win.geometry("750x460")
+        win.configure(bg=BG_PANEL)
+        win.grab_set()
+
+        # Folder bar
+        top = tk.Frame(win, bg=BG_PANEL)
+        top.pack(fill="x", padx=10, pady=(10, 0))
+        tk.Label(top, text="Folder:", bg=BG_PANEL,
+                 font=FONT_BOLD).pack(side="left")
+        folder_var = tk.StringVar(value="INBOX")
+        folder_entry = ttk.Entry(top, textvariable=folder_var, width=25)
+        folder_entry.pack(side="left", padx=6)
+
+        def _load_folder():
+            folder = folder_var.get().strip()
+            refresh_btn.config(state="disabled", text="Loading…")
+            def _run():
+                try:
+                    new_emails = fetch_folder(conn, folder, limit=30)
+                    self.root.after(0, lambda: _populate(new_emails))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Folder Error", str(e), parent=win))
+                finally:
+                    self.root.after(0, lambda: refresh_btn.config(
+                        state="normal", text="Load"))
+            threading.Thread(target=_run, daemon=True).start()
+
+        refresh_btn = tk.Button(top, text="Load", command=_load_folder,
+                                bg="#2980b9", fg="white", font=FONT_BOLD,
+                                relief="flat", padx=10, pady=3, cursor="hand2")
+        refresh_btn.pack(side="left")
+        tk.Label(top, text="(e.g. INBOX, [Gmail]/Spam, [Gmail]/Sent Mail)",
+                 bg=BG_PANEL, fg=FG_MUTED,
+                 font=("Segoe UI", 8, "italic")).pack(side="left", padx=8)
+
+        # Email list
+        cols = ("From", "Subject", "Date")
+        tree = ttk.Treeview(win, columns=cols, show="headings",
+                            selectmode="browse", height=16)
+        tree.heading("From",    text="From")
+        tree.heading("Subject", text="Subject")
+        tree.heading("Date",    text="Date")
+        tree.column("From",    width=200, anchor="w")
+        tree.column("Subject", width=320, anchor="w")
+        tree.column("Date",    width=160, anchor="w")
+
+        sb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=8)
+        sb.pack(side="left", fill="y", pady=8)
+
+        self._inbox_emails = emails
+
+        def _populate(email_list):
+            self._inbox_emails = email_list
+            for row in tree.get_children():
+                tree.delete(row)
+            for i, em in enumerate(email_list):
+                subject = em.subject[:60] + "…" if len(em.subject) > 60 else em.subject
+                sender  = em.sender[:40] + "…" if len(em.sender) > 40 else em.sender
+                tree.insert("", "end", iid=str(i),
+                            values=(sender, subject, em.date[:25]))
+
+        _populate(emails)
+
+        def _load_selected(event=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            idx = int(sel[0])
+            em = self._inbox_emails[idx]
+            self._email_text.delete("1.0", "end")
+            self._email_text.insert("1.0", em.raw)
+            self._file_label.config(
+                text=f"Gmail: {em.subject[:50]}", fg=FG_MAIN)
+            win.destroy()
+
+        tree.bind("<Double-1>", _load_selected)
+
+        tk.Button(win, text="Load & Analyze Selected",
+                  command=_load_selected,
+                  bg="#27ae60", fg="white", font=FONT_BOLD,
+                  relief="flat", padx=14, pady=6,
+                  cursor="hand2").pack(pady=(0, 10))
 
     def _clear_input(self):
         self._email_text.delete("1.0", "end")
