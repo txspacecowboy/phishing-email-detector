@@ -69,9 +69,14 @@ def main():
     )
     parser.add_argument(
         "files",
-        nargs="+",
+        nargs="*",
         metavar="FILE",
         help=".eml file(s) to analyze, or '-' to read from stdin",
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the graphical interface",
     )
     parser.add_argument(
         "--summary",
@@ -90,6 +95,15 @@ def main():
         help="VirusTotal API key for URL reputation checks (or set VT_API_KEY env var)",
     )
     args = parser.parse_args()
+
+    if args.gui:
+        from gui import launch
+        launch()
+        return
+
+    if not args.files:
+        parser.print_help()
+        sys.exit(0)
 
     if args.vt_key:
         print(f"[*] VirusTotal integration enabled")
