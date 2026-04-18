@@ -6,7 +6,8 @@ from tkinter import ttk, filedialog, scrolledtext, simpledialog, messagebox
 
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import analyze_email, AnalysisResult
-from gmail_fetch import connect, fetch_inbox, fetch_folder, list_folders, EmailSummary
+from gmail_fetch import connect, fetch_inbox, fetch_folder, EmailSummary
+from credentials import save as creds_save, load as creds_load, clear as creds_clear
 
 # ── Theme ──────────────────────────────────────────────────────────────────────
 
@@ -50,8 +51,12 @@ class PhishingDetectorApp:
         self.root.minsize(800, 600)
         self.root.configure(bg=BG_ROOT)
 
+        self._gmail_conn = None
+        self._gmail_address = ""
+
         self._build_styles()
         self._build_ui()
+        self._auto_connect_gmail()
 
     # ── Styles ─────────────────────────────────────────────────────────────────
 
@@ -123,17 +128,26 @@ class PhishingDetectorApp:
                                     font=FONT_MAIN, anchor="w")
         self._file_label.grid(row=0, column=1, sticky="ew")
 
-        tk.Button(file_row, text="📧 Gmail",
+        self._gmail_btn = tk.Button(file_row, text="📧 Gmail",
                   command=self._open_gmail_dialog,
                   bg="#c0392b", fg="white", font=FONT_BOLD,
                   relief="flat", padx=10, pady=4,
-                  cursor="hand2").grid(row=0, column=2, padx=(8, 0))
+                  cursor="hand2")
+        self._gmail_btn.grid(row=0, column=2, padx=(8, 0))
+
+        self._disconnect_btn = tk.Button(file_row, text="Disconnect",
+                  command=self._disconnect_gmail,
+                  bg="#888888", fg="white", font=FONT_MAIN,
+                  relief="flat", padx=8, pady=4,
+                  cursor="hand2")
+        self._disconnect_btn.grid(row=0, column=3, padx=(4, 0))
+        self._disconnect_btn.grid_remove()
 
         tk.Button(file_row, text="✕ Clear",
                   command=self._clear_input,
                   bg="#e0e0e0", fg=FG_MAIN, font=FONT_MAIN,
                   relief="flat", padx=8, pady=4,
-                  cursor="hand2").grid(row=0, column=3, padx=(8, 0))
+                  cursor="hand2").grid(row=0, column=4, padx=(8, 0))
 
         # Divider label
         tk.Label(frame, text="— or paste raw email text below —",
@@ -272,24 +286,39 @@ class PhishingDetectorApp:
             self._file_label.config(text=f"Error: {e}", fg="#c0392b")
 
     def _open_gmail_dialog(self):
+        # If already connected, go straight to inbox
+        if self._gmail_conn:
+            self._set_status("Loading inbox…")
+            def _run():
+                try:
+                    emails = fetch_inbox(self._gmail_conn, limit=30)
+                    self.root.after(0, lambda: self._show_inbox(self._gmail_conn, emails))
+                except Exception:
+                    self._gmail_conn = None
+                    self.root.after(0, self._open_gmail_dialog)
+            threading.Thread(target=_run, daemon=True).start()
+            return
+
         dialog = tk.Toplevel(self.root)
         dialog.title("Connect to Gmail")
-        dialog.geometry("420x220")
+        dialog.geometry("420x260")
         dialog.resizable(False, False)
         dialog.configure(bg=BG_PANEL)
         dialog.grab_set()
 
+        saved_addr, saved_pwd = creds_load()
+
         tk.Label(dialog, text="Gmail Address:",
                  bg=BG_PANEL, fg=FG_MAIN, font=FONT_BOLD).grid(
                  row=0, column=0, sticky="w", padx=16, pady=(20, 4))
-        email_var = tk.StringVar()
+        email_var = tk.StringVar(value=saved_addr)
         ttk.Entry(dialog, textvariable=email_var, width=35).grid(
             row=0, column=1, padx=(0, 16), pady=(20, 4))
 
         tk.Label(dialog, text="App Password:",
                  bg=BG_PANEL, fg=FG_MAIN, font=FONT_BOLD).grid(
                  row=1, column=0, sticky="w", padx=16, pady=4)
-        pass_var = tk.StringVar()
+        pass_var = tk.StringVar(value=saved_pwd)
         ttk.Entry(dialog, textvariable=pass_var, show="*", width=35).grid(
             row=1, column=1, padx=(0, 16), pady=4)
 
@@ -297,11 +326,16 @@ class PhishingDetectorApp:
                  text="Use your Gmail App Password\n(not your regular password)",
                  bg=BG_PANEL, fg=FG_MUTED,
                  font=("Segoe UI", 8, "italic")).grid(
-                 row=2, column=0, columnspan=2, pady=(0, 12))
+                 row=2, column=0, columnspan=2, pady=(0, 4))
+
+        remember_var = tk.BooleanVar(value=bool(saved_pwd))
+        ttk.Checkbutton(dialog, text="Remember me",
+                        variable=remember_var).grid(
+                        row=3, column=0, columnspan=2, pady=(0, 8))
 
         status = tk.Label(dialog, text="", bg=BG_PANEL,
                           fg="#c0392b", font=("Segoe UI", 9))
-        status.grid(row=3, column=0, columnspan=2)
+        status.grid(row=4, column=0, columnspan=2)
 
         def _connect():
             addr = email_var.get().strip()
@@ -316,8 +350,17 @@ class PhishingDetectorApp:
                 try:
                     conn = connect(addr, pwd)
                     emails = fetch_inbox(conn, limit=30)
-                    self.root.after(0, lambda: (dialog.destroy(),
-                                                self._show_inbox(conn, emails)))
+                    if remember_var.get():
+                        creds_save(addr, pwd)
+                    else:
+                        creds_clear()
+                    self._gmail_conn = conn
+                    self._gmail_address = addr
+                    self.root.after(0, lambda: (
+                        dialog.destroy(),
+                        self._on_gmail_connected(),
+                        self._show_inbox(conn, emails),
+                    ))
                 except Exception as e:
                     err = str(e)
                     self.root.after(0, lambda: (
@@ -330,7 +373,7 @@ class PhishingDetectorApp:
                                 command=_connect,
                                 bg="#2980b9", fg="white", font=FONT_BOLD,
                                 relief="flat", padx=16, pady=6, cursor="hand2")
-        connect_btn.grid(row=4, column=0, columnspan=2, pady=(8, 0))
+        connect_btn.grid(row=5, column=0, columnspan=2, pady=(8, 0))
 
     def _show_inbox(self, conn, emails: list):
         win = tk.Toplevel(self.root)
@@ -420,6 +463,42 @@ class PhishingDetectorApp:
                   bg="#27ae60", fg="white", font=FONT_BOLD,
                   relief="flat", padx=14, pady=6,
                   cursor="hand2").pack(pady=(0, 10))
+
+    def _on_gmail_connected(self):
+        short = self._gmail_address.split("@")[0]
+        self._gmail_btn.config(text=f"📧 {short}", bg="#27ae60")
+        self._disconnect_btn.grid()
+
+    def _disconnect_gmail(self):
+        try:
+            if self._gmail_conn:
+                self._gmail_conn.logout()
+        except Exception:
+            pass
+        self._gmail_conn = None
+        self._gmail_address = ""
+        creds_clear()
+        self._gmail_btn.config(text="📧 Gmail", bg="#c0392b")
+        self._disconnect_btn.grid_remove()
+        self._set_status("Disconnected from Gmail.")
+
+    def _auto_connect_gmail(self):
+        addr, pwd = creds_load()
+        if not addr or not pwd:
+            return
+        self._set_status(f"Reconnecting to Gmail as {addr}…")
+        def _run():
+            try:
+                conn = connect(addr, pwd)
+                self._gmail_conn = conn
+                self._gmail_address = addr
+                self.root.after(0, self._on_gmail_connected)
+                self.root.after(0, lambda: self._set_status(
+                    f"Gmail connected: {addr}"))
+            except Exception:
+                self.root.after(0, lambda: self._set_status(
+                    "Gmail auto-connect failed — click Gmail to reconnect."))
+        threading.Thread(target=_run, daemon=True).start()
 
     def _clear_input(self):
         self._email_text.delete("1.0", "end")

@@ -2,3 +2,5 @@
 # Phase 2 — install these for live DNS and VirusTotal checks:
 dnspython>=2.4.0    # live SPF/DKIM/DMARC DNS verification (--dns flag)
 requests>=2.31.0    # VirusTotal API URL reputation checks (--vt-key flag)
+# Phase 4 — Gmail integration
+keyring>=24.0.0     # secure credential storage in Windows Credential Manager
